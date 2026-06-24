@@ -5,18 +5,20 @@
 // 弹窗:悔棋请求、认输确认、退出确认、rematch 邀请、对局结束
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, Alert, Modal, Animated, Easing, Dimensions,
+  View, Text, StyleSheet, Alert, Modal, Dimensions,
   TouchableOpacity,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import Board from '../components/Board';
-import GameStatus from '../components/GameStatus';
 import ResultModal from '../components/ResultModal';
 import PressableScale from '../components/PressableScale';
+import ChatPanel from '../components/ChatPanel';
+import EmojiPanel, { EmojiReactionLayer } from '../components/EmojiPanel';
 import { colors, radius, fontSize, fontWeight, spacing } from '../theme';
 import { getSocket, onGlobal } from '../services/socket';
 import { getStoredUser } from '../services/api';
+import { playPlace, playWin, playLose, startMusic, stopMusic, toggleMusic, isMusicEnabled, toggleSfx, isSfxEnabled } from '../services/sound';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 // 棋盘自动按可用高度适配，确保操作区不被挤出屏幕
@@ -85,12 +87,20 @@ export default function GameScreen({ route, navigation }) {
   const [rematchFrom, setRematchFrom] = useState(null); // { fromId, fromUsername, gameId }
   // 确认落子弹窗
   const [pendingPlace, setPendingPlace] = useState(null); // { x, y } 第一次点击的虚化位置
+  // 聊天和表情
+  const [chatMessages, setChatMessages] = useState([]);
+  const [showChat, setShowChat] = useState(false);
+  const [showEmoji, setShowEmoji] = useState(false);
+  const [emojiReactions, setEmojiReactions] = useState([]);
+  const [musicOn, setMusicOn] = useState(isMusicEnabled());
+  const [sfxOn, setSfxOn] = useState(isSfxEnabled());
   // 思考倒计时
   const [turnDeadline, setTurnDeadline] = useState(null);
   const [turnSeconds, setTurnSeconds] = useState(90);
   const [tickNow, setTickNow] = useState(Date.now());
   const socketRef = useRef(null);
   const gameIdRef = useRef(gameId);
+  const myIdRef = useRef(null);
   // 快速双击同一位置直接落子:记录上一次点击的位置+时间戳
   const lastTapRef = useRef({ x: -1, y: -1, t: 0 });
   const DOUBLE_TAP_MS = 1500;
@@ -106,6 +116,11 @@ export default function GameScreen({ route, navigation }) {
       const token = await AsyncStorage.getItem('token');
       const s = getSocket(token);
       socketRef.current = s;
+      // 获取当前用户 ID
+      try {
+        const u = await getStoredUser();
+        if (u?.id) myIdRef.current = u.id;
+      } catch (_) {}
       // 进入对局后立即通知服务端"我已进入" -> 服务端开始记时,
       // 且后续这个 user 断线才会被算作"比赛中离线"去通知对手
       if (s.connected) {
@@ -134,8 +149,8 @@ export default function GameScreen({ route, navigation }) {
         setMoves((prev) => [...prev, newMove]);
         setLastMove(newMove);
         setCurrentTurn(data.player === 'black' ? 'white' : 'black');
-        // 对方落子后,清掉我之前的虚化预览
         setPendingPlace(null);
+        playPlace();
       });
       // 服务端推送每回合开始（倒计时）
       s.on('turn_started', (data) => {
@@ -189,8 +204,10 @@ export default function GameScreen({ route, navigation }) {
           const myId = u?.id;
           const isWin = myId != null && data.winner === myId;
           setResultInfo({ ...data, isWin });
+          if (isWin) playWin(); else playLose();
         } catch (e) {
           setResultInfo({ ...data, isWin: false });
+          playLose();
         }
       });
       // ★ 用全局事件总线订阅 rematch_requested(任何时候都能收到)
@@ -229,6 +246,17 @@ export default function GameScreen({ route, navigation }) {
         });
       });
       s.on('error', (data) => Alert.alert('提示', data?.message || '出错了'));
+      s.on('chat_message', (data) => {
+        setChatMessages((prev) => [...prev, { ...data, isMe: data.fromId === myIdRef.current }]);
+      });
+      s.on('emoji_reaction', (data) => {
+        const id = Date.now() + Math.random();
+        setEmojiReactions((prev) => [...prev, { id, emoji: data.emoji, onDone: () => {
+          setEmojiReactions((p) => p.filter((r) => r.id !== id));
+        }}]);
+      });
+      // 启动背景音乐
+      startMusic();
     })();
     return () => {
       isMounted = false;
@@ -248,8 +276,11 @@ export default function GameScreen({ route, navigation }) {
         s.off('error');
         s.off('game_ready');
         s.off('join_game_ack');
+        s.off('chat_message');
+        s.off('emoji_reaction');
       }
       unsubs.forEach((u) => { try { u && u(); } catch (_) {} });
+      stopMusic();
     };
   }, []);
 
@@ -301,6 +332,7 @@ export default function GameScreen({ route, navigation }) {
     setLastMove(newMove);
     setCurrentTurn(myColor === 'black' ? 'white' : 'black');
     socketRef.current?.emit('make_move', { gameId, x, y });
+    playPlace();
   }
 
   function cancelPlace() {
@@ -352,6 +384,25 @@ export default function GameScreen({ route, navigation }) {
 
   function exitGame() {
     navigation.replace('Match');
+  }
+
+  function sendChatMessage(text) {
+    socketRef.current?.emit('chat_message', { gameId, text });
+  }
+
+  function sendEmoji(emoji) {
+    socketRef.current?.emit('emoji_reaction', { gameId, emoji });
+  }
+
+  function handleToggleMusic() {
+    const on = toggleMusic();
+    setMusicOn(on);
+    if (on) startMusic();
+  }
+
+  function handleToggleSfx() {
+    const on = toggleSfx();
+    setSfxOn(on);
   }
 
   const resultText = (() => {
@@ -471,6 +522,42 @@ export default function GameScreen({ route, navigation }) {
           <Text style={[styles.actionText, { color: colors.textMuted }]}>退出</Text>
         </TouchableOpacity>
       </View>
+
+      {/* 快捷功能按钮 */}
+      <View style={styles.quickRow}>
+        <TouchableOpacity onPress={handleToggleMusic} style={[styles.quickBtn, musicOn && styles.quickBtnActive]} activeOpacity={0.7}>
+          <Ionicons name={musicOn ? 'musical-notes' : 'musical-notes-outline'} size={14} color={musicOn ? colors.gold : colors.textMuted} />
+          <Text style={[styles.quickBtnText, musicOn && { color: colors.gold }]}>音乐</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={handleToggleSfx} style={[styles.quickBtn, sfxOn && styles.quickBtnActive]} activeOpacity={0.7}>
+          <Ionicons name={sfxOn ? 'volume-high' : 'volume-mute'} size={14} color={sfxOn ? colors.gold : colors.textMuted} />
+          <Text style={[styles.quickBtnText, sfxOn && { color: colors.gold }]}>音效</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => { setShowChat(!showChat); setShowEmoji(false); }} style={[styles.quickBtn, showChat && styles.quickBtnActive]} activeOpacity={0.7}>
+          <Ionicons name="chatbubble-ellipses" size={14} color={showChat ? colors.gold : colors.textMuted} />
+          <Text style={[styles.quickBtnText, showChat && { color: colors.gold }]}>聊天</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => { setShowEmoji(!showEmoji); setShowChat(false); }} style={[styles.quickBtn, showEmoji && styles.quickBtnActive]} activeOpacity={0.7}>
+          <Ionicons name="happy" size={14} color={showEmoji ? colors.gold : colors.textMuted} />
+          <Text style={[styles.quickBtnText, showEmoji && { color: colors.gold }]}>表情</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* 聊天面板 */}
+      <ChatPanel
+        messages={chatMessages}
+        onSend={sendChatMessage}
+        visible={showChat}
+      />
+
+      {/* 表情面板 */}
+      <EmojiPanel
+        onEmoji={sendEmoji}
+        visible={showEmoji}
+      />
+
+      {/* 表情飘浮动画 */}
+      <EmojiReactionLayer reactions={emojiReactions} />
 
       {/* 悔棋请求弹窗 */}
       <Modal transparent visible={!!undoModal} animationType="fade" onRequestClose={() => setUndoModal(null)}>
@@ -658,6 +745,26 @@ const styles = StyleSheet.create({
   },
   exitBtn: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   actionText: { marginLeft: 4, fontSize: 13, fontWeight: '700', letterSpacing: 2 },
+
+  // 快捷功能
+  quickRow: {
+    flexDirection: 'row', justifyContent: 'center',
+    paddingHorizontal: spacing.md, paddingVertical: 2,
+  },
+  quickBtn: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 10, paddingVertical: 5, marginHorizontal: 4,
+    borderRadius: radius.pill,
+    backgroundColor: colors.bgCard,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)',
+  },
+  quickBtnActive: {
+    borderColor: colors.goldDeep,
+    backgroundColor: 'rgba(212,165,116,0.1)',
+  },
+  quickBtnText: {
+    color: colors.textMuted, fontSize: 10, fontWeight: '700', marginLeft: 4, letterSpacing: 1,
+  },
 
   // Modal
   modalBg: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', alignItems: 'center' },
