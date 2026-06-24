@@ -83,14 +83,14 @@ export default function GameScreen({ route, navigation }) {
   const [rematchDeclined, setRematchDeclined] = useState(false);
   const [rematchFrom, setRematchFrom] = useState(null); // { fromId, fromUsername, gameId }
   // 确认落子弹窗
-  const [pendingPlace, setPendingPlace] = useState(null); // { x, y }
+  const [pendingPlace, setPendingPlace] = useState(null); // { x, y } 第一次点击的虚化位置
   // 思考倒计时
   const [turnDeadline, setTurnDeadline] = useState(null);
   const [turnSeconds, setTurnSeconds] = useState(90);
   const [tickNow, setTickNow] = useState(Date.now());
   const socketRef = useRef(null);
   const gameIdRef = useRef(gameId);
-  // 双击直接落子:记录上一次点击的位置+时间戳
+  // 快速双击同一位置直接落子:记录上一次点击的位置+时间戳
   const lastTapRef = useRef({ x: -1, y: -1, t: 0 });
   const DOUBLE_TAP_MS = 1500;
 
@@ -102,10 +102,13 @@ export default function GameScreen({ route, navigation }) {
       socketRef.current = s;
 
       s.on('opponent_move', (data) => {
+        if (data.gameId !== undefined && data.gameId !== gameIdRef.current) return;
         const newMove = { x: data.x, y: data.y, player: data.player };
         setMoves((prev) => [...prev, newMove]);
         setLastMove(newMove);
         setCurrentTurn(data.player === 'black' ? 'white' : 'black');
+        // 对方落子后,清掉我之前的虚化预览
+        setPendingPlace(null);
       });
       // 服务端推送每回合开始（倒计时）
       s.on('turn_started', (data) => {
@@ -238,9 +241,9 @@ export default function GameScreen({ route, navigation }) {
     if (currentTurn !== myColor) {
       return;
     }
-    // 双击同一位置：1.5s 内再次点击 → 直接落子
     const now = Date.now();
     const last = lastTapRef.current;
+    // 快速双击同一位置(< 1.5s):跳过虚化预览,直接落子
     if (last.x === x && last.y === y && now - last.t < DOUBLE_TAP_MS) {
       lastTapRef.current = { x: -1, y: -1, t: 0 };
       setPendingPlace(null);
@@ -248,6 +251,16 @@ export default function GameScreen({ route, navigation }) {
       return;
     }
     lastTapRef.current = { x, y, t: now };
+    // 二次落子校验:第一次点击只显示虚化预览(pendingPlace),
+    // 再次点击同一位置 → 实体落子;点击其他位置 → 移动虚化棋子
+    if (pendingPlace && pendingPlace.x === x && pendingPlace.y === y) {
+      // 第二次点同一处:真正落子
+      lastTapRef.current = { x: -1, y: -1, t: 0 };
+      setPendingPlace(null);
+      doPlace(x, y);
+      return;
+    }
+    // 第一次点击,或点击了不同位置 → 移动虚化棋子
     setPendingPlace({ x, y });
   }
 
@@ -259,17 +272,8 @@ export default function GameScreen({ route, navigation }) {
     socketRef.current?.emit('make_move', { gameId, x, y });
   }
 
-  function confirmPlace() {
-    if (!pendingPlace) return;
-    const { x, y } = pendingPlace;
-    setPendingPlace(null);
-    lastTapRef.current = { x: -1, y: -1, t: 0 };
-    doPlace(x, y);
-  }
-
   function cancelPlace() {
     setPendingPlace(null);
-    lastTapRef.current = { x: -1, y: -1, t: 0 };
   }
 
   function onRequestUndo() {
@@ -353,6 +357,7 @@ export default function GameScreen({ route, navigation }) {
         <Board
           moves={moves}
           lastMove={lastMove}
+          ghost={pendingPlace ? { x: pendingPlace.x, y: pendingPlace.y, color: myColor } : null}
           disabled={status !== 'playing'}
           onPlace={onPlace}
           size={BOARD_PX}
@@ -371,11 +376,12 @@ export default function GameScreen({ route, navigation }) {
             </Text>
           </View>
         )}
-        {/* 落子确认条（替代弹窗，避免遮挡） */}
+        {/* 虚化预览时的轻量提示条(支持取消) */}
         {!!pendingPlace && (
           <View style={styles.confirmBar}>
+            <Ionicons name="location-outline" size={14} color={colors.goldBright} />
             <Text style={styles.confirmText}>
-              在 ({pendingPlace.x + 1}, {pendingPlace.y + 1}) 落子？再点一次确认
+              预览位置 ({pendingPlace.x + 1}, {pendingPlace.y + 1}) · 再点一次或快速双击确认,点其它位置可调整
             </Text>
             <View style={styles.confirmActions}>
               <TouchableOpacity
@@ -384,13 +390,6 @@ export default function GameScreen({ route, navigation }) {
                 activeOpacity={0.7}
               >
                 <Ionicons name="close" size={18} color="#FF6B6B" />
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={confirmPlace}
-                style={[styles.confirmBtn, { backgroundColor: colors.gold, borderColor: colors.gold }]}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="checkmark" size={18} color={colors.textOnGold} />
               </TouchableOpacity>
             </View>
           </View>

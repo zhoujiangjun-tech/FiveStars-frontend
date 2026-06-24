@@ -27,6 +27,7 @@ const WOOD_GRAINS = [
 export default function Board({
   moves = [],
   lastMove = null,
+  ghost = null,         // { x, y, color } 第一次点击时的虚化预览棋子
   disabled = false,
   onPlace,
   size = BOARD_PX,
@@ -103,7 +104,7 @@ export default function Board({
         onPress={handlePress}
         style={[styles.board, { width: size, height: size }]}
       >
-        <Svg width={size} height={size} pointerEvents="none">
+        <Svg width={size} height={size} pointerEvents="none" style={styles.svg}>
           <Defs>
             <LinearGradient id="boardGrad" x1="0" y1="0" x2="0" y2="1">
               <Stop offset="0" stopColor="#3a2114" />
@@ -179,6 +180,33 @@ export default function Board({
               stroke={colors.goldBright} strokeWidth={1.8} fill="none"
             />
           )}
+
+          {/* 虚化预览棋子(第一次落子时显示,第二次落子实体化) */}
+          {ghost && !disabled && !placedMap[`${ghost.x}_${ghost.y}`] && (
+            <React.Fragment key="ghost">
+              {/* 虚化圆环,提示此处将落子 */}
+              <Circle
+                cx={PADDING + ghost.x * cell}
+                cy={PADDING + ghost.y * cell}
+                r={stoneR + 4}
+                fill="none"
+                stroke={colors.goldBright}
+                strokeWidth={2}
+                opacity={0.65}
+                strokeDasharray="4 3"
+              />
+              {/* 虚化棋子本体 */}
+              <Circle
+                cx={PADDING + ghost.x * cell}
+                cy={PADDING + ghost.y * cell}
+                r={stoneR}
+                fill={ghost.color === 'black' ? colors.stoneBlack : colors.stoneWhite}
+                opacity={0.45}
+                stroke={ghost.color === 'black' ? '#000' : colors.stoneWhiteEdge}
+                strokeWidth={1}
+              />
+            </React.Fragment>
+          )}
         </Svg>
       </Pressable>
     </View>
@@ -193,5 +221,18 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.5,
     shadowOffset: { width: 0, height: 4 },
     shadowRadius: 6,
+    // web 端:隐藏黄色文本光标和聚焦描边
+    ...(typeof document !== 'undefined' ? {
+      caretColor: 'transparent',
+      outline: 'none',
+      WebkitTapHighlightColor: 'transparent',
+      WebkitUserSelect: 'none',
+      userSelect: 'none',
+    } : {}),
   },
+  svg: typeof document !== 'undefined' ? {
+    // web 端:阻止 Svg 元素被聚焦时出现黄色光标
+    caretColor: 'transparent',
+    outline: 'none',
+  } : {},
 });

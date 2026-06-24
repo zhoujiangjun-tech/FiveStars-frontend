@@ -244,17 +244,25 @@ export default function MatchScreen({ navigation }) {
       Alert.alert('提示', '尚未连接服务器，请稍后再试');
       return;
     }
-    if (!sock.connected) {
-      // 等待连接上再发送
-      sock.once('connect', () => {
-        sock.emit('join_match');
-        setMatching(true);
-      });
-      Alert.alert('提示', '正在连接服务器…');
-      return;
-    }
-    sock.emit('join_match');
-    setMatching(true);
+    const tryEmit = () => {
+      if (!sock.connected) return false;
+      sock.emit('join_match');
+      setMatching(true);
+      return true;
+    };
+    if (tryEmit()) return;
+    // 未连接:等连接上再发(限制最多 6 秒)
+    let waited = 0;
+    const tick = setInterval(() => {
+      waited += 250;
+      if (tryEmit()) {
+        clearInterval(tick);
+      } else if (waited >= 6000) {
+        clearInterval(tick);
+        Alert.alert('提示', '连接服务器超时，请稍后再试');
+      }
+    }, 250);
+    Alert.alert('提示', '正在连接服务器…');
   }
 
   function cancelMatch() {
