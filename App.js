@@ -313,7 +313,8 @@ function InnerApp() {
           headerTintColor: colors.gold,
           headerTitleStyle: { fontWeight: '700', letterSpacing: 2 },
           headerShadowVisible: false,
-          contentStyle: { backgroundColor: colors.bgDeep },
+          // web 端关键:让屏幕内容占满高度,否则底部按钮可能落到视口外
+          contentStyle: { backgroundColor: colors.bgDeep, flex: 1 },
           animation: 'slide_from_right',
           animationDuration: 220,
         }}

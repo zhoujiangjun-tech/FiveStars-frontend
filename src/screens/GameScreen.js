@@ -73,6 +73,7 @@ export default function GameScreen({ route, navigation }) {
   const [currentTurn, setCurrentTurn] = useState('black');
   const [lastMove, setLastMove] = useState(null);
   const [status, setStatus] = useState('playing');
+  const [bothReady, setBothReady] = useState(false);
   const [undoBlack, setUndoBlack] = useState(3);
   const [undoWhite, setUndoWhite] = useState(3);
   const [undoModal, setUndoModal] = useState(null);
@@ -96,10 +97,32 @@ export default function GameScreen({ route, navigation }) {
 
   useEffect(() => {
     let unsubs = [];
+    let isMounted = true;
     (async () => {
       const token = await AsyncStorage.getItem('token');
       const s = getSocket(token);
       socketRef.current = s;
+      // 进入对局后立即通知服务端"我已进入" -> 服务端开始记时,
+      // 且后续这个 user 断线才会被算作"比赛中离线"去通知对手
+      if (s.connected) {
+        try { s.emit('join_game', { gameId: gameIdRef.current }); } catch (_) {}
+      } else {
+        s.once('connect', () => {
+          try { s.emit('join_game', { gameId: gameIdRef.current }); } catch (_) {}
+        });
+      }
+      // 双方都进入对局后,服务端会推送 game_ready
+      s.on('game_ready', (data) => {
+        if (!isMounted) return;
+        if (data.gameId !== gameIdRef.current) return;
+        setBothReady(true);
+      });
+      s.on('join_game_ack', (data) => {
+        if (!isMounted) return;
+        if (data.gameId !== gameIdRef.current) return;
+        // 对方也已经在房间里了
+        if (data.bothReady) setBothReady(true);
+      });
 
       s.on('opponent_move', (data) => {
         if (data.gameId !== undefined && data.gameId !== gameIdRef.current) return;
@@ -204,6 +227,7 @@ export default function GameScreen({ route, navigation }) {
       s.on('error', (data) => Alert.alert('提示', data?.message || '出错了'));
     })();
     return () => {
+      isMounted = false;
       const s = socketRef.current;
       if (s) {
         s.off('opponent_move');
@@ -217,12 +241,14 @@ export default function GameScreen({ route, navigation }) {
         s.off('rematch_cancelled');
         s.off('match_success');
         s.off('error');
+        s.off('game_ready');
+        s.off('join_game_ack');
       }
       unsubs.forEach((u) => { try { u && u(); } catch (_) {} });
     };
   }, []);
 
-  const isMyTurn = status === 'playing' && currentTurn === myColor;
+  const isMyTurn = status === 'playing' && currentTurn === myColor && bothReady;
 
   // 每秒更新倒计时显示
   useEffect(() => {

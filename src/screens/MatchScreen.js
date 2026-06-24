@@ -4,7 +4,7 @@
 // 底部:四个功能入口卡片
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  View, Text, StyleSheet, Alert, Animated, Easing, Dimensions, Platform, TouchableOpacity, Modal,
+  View, Text, StyleSheet, Alert, Animated, Easing, Dimensions, Platform, TouchableOpacity, Modal, ScrollView, SafeAreaView,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Svg, { Circle, Defs, LinearGradient, Stop, G } from 'react-native-svg';
@@ -318,7 +318,13 @@ export default function MatchScreen({ navigation }) {
   const winRate = stats.total > 0 ? Math.round((stats.wins / stats.total) * 100) : 0;
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.bgDeep }}>
+      <View style={styles.container}>
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+        >
       {/* 顶部标题区 */}
       <View style={styles.header}>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -429,8 +435,9 @@ export default function MatchScreen({ navigation }) {
         <BottomTile icon="person" label="我的" onPress={() => navigation.navigate('Profile')} />
       </View>
 
-      {/* ★ 邀请弹窗已统一由 App.js GlobalPopups 显示,这里不再重复 */}
-    </View>
+        </ScrollView>
+      </View>
+    </SafeAreaView>
   );
 }
 
@@ -460,7 +467,16 @@ function BottomTile({ icon, label, onPress, danger, badge }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.bgDeep, paddingHorizontal: spacing.lg, paddingTop: spacing.lg, paddingBottom: spacing.md, maxWidth: 520, width: '100%', alignSelf: 'center' },
+  container: { flex: 1, backgroundColor: colors.bgDeep, maxWidth: 520, width: '100%', alignSelf: 'center' },
+  scrollContent: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.xl,
+    // 移动端浏览器安全区(微信 X5 浏览器可能裁掉底部)
+    ...(Platform.OS === 'web'
+      ? { paddingBottom: 'max(20px, env(safe-area-inset-bottom, 0px))' }
+      : {}),
+  },
 
   // 顶部 header
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.lg },
