@@ -98,6 +98,10 @@ export default function GameScreen({ route, navigation }) {
   useEffect(() => {
     let unsubs = [];
     let isMounted = true;
+    // 进入对局后 5 秒兜底放行,避免对方进不来导致永远无法落子
+    const fallbackTimer = setTimeout(() => {
+      if (isMounted) setBothReady(true);
+    }, 5000);
     (async () => {
       const token = await AsyncStorage.getItem('token');
       const s = getSocket(token);
@@ -228,6 +232,7 @@ export default function GameScreen({ route, navigation }) {
     })();
     return () => {
       isMounted = false;
+      clearTimeout(fallbackTimer);
       const s = socketRef.current;
       if (s) {
         s.off('opponent_move');

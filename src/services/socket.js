@@ -23,13 +23,17 @@ export function getSocket(tokenOverride) {
   const token = tokenOverride || getToken();
   socket = io(config.SOCKET_URL, {
     auth: { token },
-    transports: ['polling', 'websocket'],
-    upgrade: true,
-    rememberUpgrade: false,
+    // WebSocket 优先:比 polling 更稳定,更适合实时匹配
+    transports: ['websocket', 'polling'],
+    upgrade: false,
     reconnection: true,
-    reconnectionDelay: 800,
-    reconnectionDelayMax: 3000,
-    timeout: 8000,
+    reconnectionDelay: 500,
+    reconnectionDelayMax: 2000,
+    reconnectionAttempts: Infinity,
+    timeout: 10000,
+    // 心跳保活:防止 Render 免费套餐断开空闲连接
+    pingInterval: 15000,
+    pingTimeout: 10000,
     forceNew: true,
   });
   socket.__token = token;

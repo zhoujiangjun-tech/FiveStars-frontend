@@ -17,7 +17,11 @@ export default function SearchUserScreen({ navigation }) {
 
   async function onSearch() {
     const trimmed = code.trim();
-    if (!/^\d{6}$/.test(trimmed)) return Alert.alert('提示', '请输入 6 位数字好友码');
+    if (!trimmed) return Alert.alert('提示', '请输入 6 位数字好友码或用户名');
+    // 6 位数字走好友码,其它走用户名模糊搜
+    if (!/^\d{6}$/.test(trimmed) && trimmed.length < 2) {
+      return Alert.alert('提示', '用户名至少 2 个字符');
+    }
     setLoading(true);
     setResult(null);
     try {
@@ -60,7 +64,7 @@ export default function SearchUserScreen({ navigation }) {
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={styles.body}>
-        <Text style={styles.title}>输入 6 位数字好友码</Text>
+        <Text style={styles.title}>输入 6 位数字好友码 / 用户名</Text>
         <Text style={styles.sub}>向对方申请添加为好友</Text>
 
         <View style={styles.inputWrap}>
@@ -68,16 +72,18 @@ export default function SearchUserScreen({ navigation }) {
           <TextInput
             style={styles.input}
             value={code}
-            onChangeText={(t) => setCode(t.replace(/\D/g, '').slice(0, 6))}
-            placeholder="例如 123456"
+            onChangeText={(t) => setCode(t.replace(/\s/g, '').slice(0, 32))}
+            placeholder="好友码或用户名"
             placeholderTextColor={colors.textMuted}
-            keyboardType="number-pad"
-            maxLength={6}
+            keyboardType={Platform.OS === 'ios' ? 'default' : 'visible-password'}
+            maxLength={32}
             autoFocus
+            autoCorrect={false}
+            autoCapitalize="none"
           />
         </View>
 
-        <PressableScale onPress={onSearch} style={styles.searchBtn} disabled={loading || code.length !== 6}>
+        <PressableScale onPress={onSearch} style={styles.searchBtn} disabled={loading || !code.trim()}>
           {loading ? <ActivityIndicator color={colors.textOnGold} /> : (
             <>
               <Ionicons name="search" size={18} color={colors.textOnGold} />

@@ -151,6 +151,10 @@ export default function MatchScreen({ navigation }) {
   const [friendRequestCount, setFriendRequestCount] = useState(0);
   const [incomingInvite, setIncomingInvite] = useState(null); // 收到的对弈邀请
   const socketRef = useRef(null);
+  const matchRetryRef = useRef(null);
+  const matchingRef = useRef(false);
+  // 同步 matching state 到 ref,供 setTimeout 闭包读取最新值
+  useEffect(() => { matchingRef.current = matching; }, [matching]);
 
   async function refreshFriendRequestCount() {
     try {
@@ -190,6 +194,13 @@ export default function MatchScreen({ navigation }) {
       socketRef.current = s;
 
       s.on('connect_error', (err) => Alert.alert('连接错误', err.message));
+      s.on('connect', () => {
+        // 重连后,如果之前在匹配中,重新加入队列
+        if (matchingRef.current) {
+          console.log('[MatchScreen] reconnect while matching, re-join');
+          s.emit('join_match');
+        }
+      });
       s.on('online_count', (data) => setOnlineCount(data?.count || 0));
       s.on('match_waiting', () => setMatching(true));
       s.on('match_success', (data) => {
@@ -227,6 +238,7 @@ export default function MatchScreen({ navigation }) {
     return () => {
       const s = socketRef.current;
       if (s) {
+        s.off('connect');
         s.off('online_count');
         s.off('match_waiting');
         s.off('match_success');
@@ -248,6 +260,15 @@ export default function MatchScreen({ navigation }) {
       if (!sock.connected) return false;
       sock.emit('join_match');
       setMatching(true);
+      // 30 秒兜底:如果还没收到 match_success,自动重试一次
+      // 解决 Render WebSocket 丢包导致一方收到 match_success 另一方没收到的问题
+      if (matchRetryRef.current) clearTimeout(matchRetryRef.current);
+      matchRetryRef.current = setTimeout(() => {
+        if (matchingRef.current && sock.connected) {
+          console.log('[MatchScreen] match timeout, retry join_match');
+          sock.emit('join_match');
+        }
+      }, 30000);
       return true;
     };
     if (tryEmit()) return;
@@ -268,6 +289,7 @@ export default function MatchScreen({ navigation }) {
   function cancelMatch() {
     if (socketRef.current) socketRef.current.emit('cancel_match');
     setMatching(false);
+    if (matchRetryRef.current) { clearTimeout(matchRetryRef.current); matchRetryRef.current = null; }
   }
 
   function respondInvite(accept) {
