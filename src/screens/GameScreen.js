@@ -13,12 +13,12 @@ import { Ionicons } from '@expo/vector-icons';
 import Board from '../components/Board';
 import ResultModal from '../components/ResultModal';
 import PressableScale from '../components/PressableScale';
-import ChatPanel from '../components/ChatPanel';
+import ChatPanel, { ChatFloatingOverlay } from '../components/ChatPanel';
 import EmojiPanel, { EmojiReactionLayer } from '../components/EmojiPanel';
 import { colors, radius, fontSize, fontWeight, spacing } from '../theme';
 import { getSocket, onGlobal } from '../services/socket';
 import { getStoredUser } from '../services/api';
-import { playPlace, playWin, playLose, startMusic, stopMusic, toggleMusic, isMusicEnabled, toggleSfx, isSfxEnabled } from '../services/sound';
+import { playPlace, playWin, playLose, toggleSfx, isSfxEnabled } from '../services/sound';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 // 棋盘自动按可用高度适配，确保操作区不被挤出屏幕
@@ -92,8 +92,8 @@ export default function GameScreen({ route, navigation }) {
   const [showChat, setShowChat] = useState(false);
   const [showEmoji, setShowEmoji] = useState(false);
   const [emojiReactions, setEmojiReactions] = useState([]);
-  const [musicOn, setMusicOn] = useState(isMusicEnabled());
   const [sfxOn, setSfxOn] = useState(isSfxEnabled());
+  const [floatingMessages, setFloatingMessages] = useState([]);
   // 思考倒计时
   const [turnDeadline, setTurnDeadline] = useState(null);
   const [turnSeconds, setTurnSeconds] = useState(90);
@@ -247,16 +247,23 @@ export default function GameScreen({ route, navigation }) {
       });
       s.on('error', (data) => Alert.alert('提示', data?.message || '出错了'));
       s.on('chat_message', (data) => {
-        setChatMessages((prev) => [...prev, { ...data, isMe: data.fromId === myIdRef.current }]);
+        const msg = { ...data, isMe: data.fromId === myIdRef.current };
+        setChatMessages((prev) => [...prev, msg]);
+        // 浮动气泡
+        const fid = Date.now() + Math.random();
+        setFloatingMessages((prev) => [...prev, {
+          ...msg, id: fid, onDone: () => setFloatingMessages((p) => p.filter((m) => m.id !== fid)),
+        }]);
       });
       s.on('emoji_reaction', (data) => {
         const id = Date.now() + Math.random();
-        setEmojiReactions((prev) => [...prev, { id, emoji: data.emoji, onDone: () => {
-          setEmojiReactions((p) => p.filter((r) => r.id !== id));
-        }}]);
+        const isFromMe = data.fromId === myIdRef.current;
+        setEmojiReactions((prev) => [...prev, {
+          id, emoji: data.emoji,
+          side: isFromMe ? 'bottom' : 'top',
+          onDone: () => setEmojiReactions((p) => p.filter((r) => r.id !== id)),
+        }]);
       });
-      // 启动背景音乐
-      startMusic();
     })();
     return () => {
       isMounted = false;
@@ -280,7 +287,6 @@ export default function GameScreen({ route, navigation }) {
         s.off('emoji_reaction');
       }
       unsubs.forEach((u) => { try { u && u(); } catch (_) {} });
-      stopMusic();
     };
   }, []);
 
@@ -394,12 +400,6 @@ export default function GameScreen({ route, navigation }) {
     socketRef.current?.emit('emoji_reaction', { gameId, emoji });
   }
 
-  function handleToggleMusic() {
-    const on = toggleMusic();
-    setMusicOn(on);
-    if (on) startMusic();
-  }
-
   function handleToggleSfx() {
     const on = toggleSfx();
     setSfxOn(on);
@@ -444,6 +444,10 @@ export default function GameScreen({ route, navigation }) {
           onPlace={onPlace}
           size={BOARD_PX}
         />
+        {/* 浮动聊天消息 (棋盘上虚化消失) */}
+        <ChatFloatingOverlay floatingMessages={floatingMessages} />
+        {/* 表情飘浮动画 */}
+        <EmojiReactionLayer reactions={emojiReactions} />
         {/* 落子步骤计数 */}
         <View style={styles.moveChip}>
           <Ionicons name="grid-outline" size={12} color={colors.gold} />
@@ -525,10 +529,6 @@ export default function GameScreen({ route, navigation }) {
 
       {/* 快捷功能按钮 */}
       <View style={styles.quickRow}>
-        <TouchableOpacity onPress={handleToggleMusic} style={[styles.quickBtn, musicOn && styles.quickBtnActive]} activeOpacity={0.7}>
-          <Ionicons name={musicOn ? 'musical-notes' : 'musical-notes-outline'} size={14} color={musicOn ? colors.gold : colors.textMuted} />
-          <Text style={[styles.quickBtnText, musicOn && { color: colors.gold }]}>音乐</Text>
-        </TouchableOpacity>
         <TouchableOpacity onPress={handleToggleSfx} style={[styles.quickBtn, sfxOn && styles.quickBtnActive]} activeOpacity={0.7}>
           <Ionicons name={sfxOn ? 'volume-high' : 'volume-mute'} size={14} color={sfxOn ? colors.gold : colors.textMuted} />
           <Text style={[styles.quickBtnText, sfxOn && { color: colors.gold }]}>音效</Text>
@@ -555,9 +555,6 @@ export default function GameScreen({ route, navigation }) {
         onEmoji={sendEmoji}
         visible={showEmoji}
       />
-
-      {/* 表情飘浮动画 */}
-      <EmojiReactionLayer reactions={emojiReactions} />
 
       {/* 悔棋请求弹窗 */}
       <Modal transparent visible={!!undoModal} animationType="fade" onRequestClose={() => setUndoModal(null)}>

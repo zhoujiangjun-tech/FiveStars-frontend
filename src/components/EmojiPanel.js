@@ -1,4 +1,4 @@
-// 表情包面板 + 飘浮动画
+// 表情包面板 + 飘浮动画 (对方表情在对手位置, 己方表情在己方位置)
 import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Animated,
@@ -31,11 +31,12 @@ export default function EmojiPanel({ onEmoji, visible }) {
   );
 }
 
-// 飘浮表情动画
-function FloatingEmoji({ emoji, onDone }) {
+// 飘浮表情动画 - 根据 side 决定起始位置
+// side: 'top' = 对手那边, 'bottom' = 自己这边
+function FloatingEmoji({ emoji, side, onDone }) {
   const anim = useRef(new Animated.Value(0)).current;
   const opacity = useRef(new Animated.Value(1)).current;
-  const xOffset = useRef((Math.random() - 0.5) * 80).current;
+  const xOffset = useRef((Math.random() - 0.5) * 60).current;
 
   useEffect(() => {
     Animated.parallel([
@@ -52,15 +53,19 @@ function FloatingEmoji({ emoji, onDone }) {
     ]).start(() => onDone && onDone());
   }, []);
 
+  // top → 向下飘, bottom → 向上飘
   const translateY = anim.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, -120],
+    outputRange: side === 'top' ? [0, 80] : [0, -80],
   });
+
+  const isTop = side === 'top';
 
   return (
     <Animated.View
       style={[
         styles.floating,
+        isTop ? styles.floatingTop : styles.floatingBottom,
         {
           transform: [{ translateY }, { translateX: xOffset }],
           opacity,
@@ -78,7 +83,7 @@ export function EmojiReactionLayer({ reactions }) {
   return (
     <View style={styles.floatingLayer} pointerEvents="none">
       {reactions.map((r) => (
-        <FloatingEmoji key={r.id} emoji={r.emoji} onDone={r.onDone} />
+        <FloatingEmoji key={r.id} emoji={r.emoji} side={r.side} onDone={r.onDone} />
       ))}
     </View>
   );
@@ -113,13 +118,17 @@ const styles = StyleSheet.create({
   floatingLayer: {
     position: 'absolute',
     top: 0, left: 0, right: 0, bottom: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
     zIndex: 100,
   },
   floating: {
     position: 'absolute',
-    top: '50%',
+    left: '50%',
+  },
+  floatingTop: {
+    top: '15%',
+  },
+  floatingBottom: {
+    bottom: '25%',
   },
   floatingEmoji: {
     fontSize: 36,

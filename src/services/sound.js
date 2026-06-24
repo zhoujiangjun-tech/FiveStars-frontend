@@ -1,127 +1,113 @@
-// 音效服务 - 背景音乐、落子音效、胜负音效
-import { Audio } from 'expo-av';
+// 音效服务 - 使用 Web Audio API 生成真实落子音效
+let audioCtx = null;
 
-let bgMusic = null;
-let musicEnabled = true;
-let sfxEnabled = true;
-
-// 生成简单 WAV 音效 (base64)
-function generateToneWav(frequency, durationMs, sampleRate = 8000) {
-  const numSamples = Math.floor(sampleRate * durationMs / 1000);
-  const buffer = new ArrayBuffer(44 + numSamples * 2);
-  const view = new DataView(buffer);
-  // WAV header
-  const writeStr = (offset, str) => { for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i)); };
-  writeStr(0, 'RIFF');
-  view.setUint32(4, 36 + numSamples * 2, true);
-  writeStr(8, 'WAVE');
-  writeStr(12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  writeStr(36, 'data');
-  view.setUint32(40, numSamples * 2, true);
-  // PCM data
-  for (let i = 0; i < numSamples; i++) {
-    const t = i / sampleRate;
-    // 音量衰减
-    const envelope = Math.max(0, 1 - i / numSamples * 1.2);
-    const sample = Math.sin(2 * Math.PI * frequency * t) * envelope * 0.4;
-    view.setInt16(44 + i * 2, Math.floor(sample * 32767), true);
+function getCtx() {
+  if (!audioCtx) {
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    } catch (_) {
+      return null;
+    }
   }
-  return buffer;
-}
-
-function wavToUri(buffer) {
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-  const base64 = btoa(binary);
-  return `data:audio/wav;base64,${base64}`;
-}
-
-// 预生成音效
-const placeWav = wavToUri(generateToneWav(800, 80));
-const winWav = wavToUri(generateToneWav(523, 150));
-const loseWav = wavToUri(generateToneWav(200, 250));
-
-// 初始化 Audio
-async function ensureAudioReady() {
-  try {
-    await Audio.setAudioModeAsync({
-      playsInSilentModeIOS: true,
-      staysActiveInBackground: false,
-      shouldDuckAndroid: true,
-    });
-  } catch (_) {}
-}
-
-// 播放音效
-async function playSfx(wavUri) {
-  if (!sfxEnabled) return;
-  try {
-    await ensureAudioReady();
-    const { sound } = await Audio.Sound.createAsync(
-      { uri: wavUri },
-      { shouldPlay: true, volume: 0.6 }
-    );
-    sound.setOnPlaybackStatusUpdate((status) => {
-      if (status.didJustFinish) sound.unloadAsync();
-    });
-  } catch (_) {}
-}
-
-// 落子音效
-export async function playPlace() {
-  await playSfx(placeWav);
-}
-
-// 胜利音效
-export async function playWin() {
-  await playSfx(winWav);
-}
-
-// 失败音效
-export async function playLose() {
-  await playSfx(loseWav);
-}
-
-// 背景音乐
-export async function toggleMusic() {
-  musicEnabled = !musicEnabled;
-  if (!musicEnabled && bgMusic) {
-    try { await bgMusic.stopAsync(); await bgMusic.unloadAsync(); } catch (_) {}
-    bgMusic = null;
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume().catch(() => {});
   }
-  return musicEnabled;
+  return audioCtx;
 }
 
-export async function startMusic() {
-  if (!musicEnabled || bgMusic) return;
-  try {
-    await ensureAudioReady();
-    // 简单的背景音: 低频循环
-    const bgBuffer = generateToneWav(220, 2000);
-    const bgUri = wavToUri(bgBuffer);
-    const { sound } = await Audio.Sound.createAsync(
-      { uri: bgUri },
-      { shouldPlay: true, isLooping: true, volume: 0.15 }
-    );
-    bgMusic = sound;
-  } catch (_) {}
-}
+// 落子音效 - 模拟棋子敲击棋盘
+export function playPlace() {
+  const ctx = getCtx();
+  if (!ctx) return;
+  const now = ctx.currentTime;
 
-export async function stopMusic() {
-  if (bgMusic) {
-    try { await bgMusic.stopAsync(); await bgMusic.unloadAsync(); } catch (_) {}
-    bgMusic = null;
+  // 1. 高频敲击声 (噪声)
+  const noiseLen = ctx.sampleRate * 0.04;
+  const noiseBuf = ctx.createBuffer(1, noiseLen, ctx.sampleRate);
+  const data = noiseBuf.getChannelData(0);
+  for (let i = 0; i < noiseLen; i++) {
+    data[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.006));
   }
+  const noiseSrc = ctx.createBufferSource();
+  noiseSrc.buffer = noiseBuf;
+  const noiseFilter = ctx.createBiquadFilter();
+  noiseFilter.type = 'bandpass';
+  noiseFilter.frequency.value = 2500;
+  noiseFilter.Q.value = 0.8;
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(0.4, now);
+  noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+  noiseSrc.connect(noiseFilter);
+  noiseFilter.connect(noiseGain);
+  noiseGain.connect(ctx.destination);
+  noiseSrc.start(now);
+  noiseSrc.stop(now + 0.04);
+
+  // 2. 低频 "咚" 声
+  const osc = ctx.createOscillator();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(220, now);
+  osc.frequency.exponentialRampToValueAtTime(80, now + 0.06);
+  const oscGain = ctx.createGain();
+  oscGain.gain.setValueAtTime(0.35, now);
+  oscGain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+  osc.connect(oscGain);
+  oscGain.connect(ctx.destination);
+  osc.start(now);
+  osc.stop(now + 0.06);
 }
 
-export function isMusicEnabled() { return musicEnabled; }
-export function isSfxEnabled() { return sfxEnabled; }
-export function toggleSfx() { sfxEnabled = !sfxEnabled; return sfxEnabled; }
+// 胜利音效 - 上行音阶
+export function playWin() {
+  const ctx = getCtx();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  const notes = [523, 659, 784, 1047];
+  notes.forEach((freq, i) => {
+    const t = now + i * 0.12;
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.value = freq;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(0.2, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.15);
+  });
+}
+
+// 失败音效 - 下行音
+export function playLose() {
+  const ctx = getCtx();
+  if (!ctx) return;
+  const now = ctx.currentTime;
+  const notes = [440, 349, 261];
+  notes.forEach((freq, i) => {
+    const t = now + i * 0.2;
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.value = freq;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(0.15, t + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.25);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.25);
+  });
+}
+
+// 音效开关 (始终开启, 仅保留接口)
+let sfxOn = true;
+export function toggleSfx() { sfxOn = !sfxOn; return sfxOn; }
+export function isSfxEnabled() { return sfxOn; }
+
+// 音乐相关 (已移除, 保留空接口)
+export function toggleMusic() { return false; }
+export function isMusicEnabled() { return false; }
+export function startMusic() {}
+export function stopMusic() {}
